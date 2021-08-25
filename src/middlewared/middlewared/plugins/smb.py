@@ -611,6 +611,21 @@ class SMBService(SystemServiceService):
             except (ValueError, TypeError):
                 verrors.add(f'smb_update.{i}', 'Not a valid mask')
 
+    async def do_netbiosname_update(self, old, new):
+        if await self.get_smb_ha_mode() != 'UNIFIED':
+            return
+
+        failover_node = await self.middleware.call('failover.node')
+        k = 'netbiosname' if failover_node == 'A' else 'netbiosname_b'
+        if old[k] == new[k]:
+            return
+
+        await self.middleware.call(
+            'network.configuration.update',
+            {'hostname_virtual': new[k]}
+        )
+        return
+
     @accepts(Dict(
         'smb_update',
         Str('netbiosname', max_length=15),
@@ -681,6 +696,7 @@ class SMBService(SystemServiceService):
                 new['loglevel'] = k
                 break
 
+        await self.do_netbiosname_update(old, new)
         await self.compress(new)
 
         await self._update_service(old, new)

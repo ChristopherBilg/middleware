@@ -411,6 +411,28 @@ def test_049_delete_cifs_share():
     results = DELETE(f"/sharing/smb/id/{smb_id}")
     assert results.status_code == 200, results.text
 
+def set_netbios_name(netbios_name):
+    """
+    Set NetbiosName in an HA-aware manner and return
+    new config
+    """
+    cmd = "midclt call smb.get_smb_ha_mode"
+    results = SSH_TEST(cmd, user, password, ip)
+    assert results['result'] is True, results['output']
+    ha_mode = results['output'].strip()
+
+    if ha_mode == 'STANDALONE':
+        payload = {"netbiosname": netbios_name}
+    else:
+        results = GET("/failover/node/")
+        assert results.status_code == 200, results.text
+        failover_node = results.json()
+        k = 'netbiosname' if failover_node == 'A' else 'netbiosname_b'
+        payload = {k: netbios_name}
+
+    results = PUT("/smb/", payload)
+    assert results.status_code == 200, results.text
+    return results.json()
 
 @pytest.mark.dependency(name="SID_CHANGED")
 def test_050_netbios_name_change_check_sid():
@@ -430,16 +452,11 @@ def test_050_netbios_name_change_check_sid():
 
     results = GET("/smb/")
     assert results.status_code == 200, results.text
-    old_netbiosname = results.json()["netbiosname"]
+    old_netbiosname = results.json()["netbiosname_local"]
     old_sid = results.json()["cifs_SID"]
 
-    payload = {
-        "netbiosname": "nb_new",
-    }
-    results = PUT("/smb/", payload)
-    assert results.status_code == 200, results.text
-    new_sid_resp = results.json()["cifs_SID"]
-    assert old_sid != new_sid_resp, results.text
+    new = set_netbios_name("nb_new")
+    new_sid_resp = new["cifs_SID"]
     sleep(5)
 
     results = GET("/smb/")
@@ -480,11 +497,7 @@ def test_052_change_netbios_name_and_check_groupmap(request):
     changes.
     """
     depends(request, ["SID_CHANGED"])
-    payload = {
-        "netbiosname": old_netbiosname,
-    }
-    results = PUT("/smb/", payload)
-    assert results.status_code == 200, results.text
+    set_netbios_name(old_netbiosname)
     sleep(5)
 
     cmd = "midclt call smb.groupmap_list"
